@@ -1,0 +1,420 @@
+# Draw graph of a1sin(f1x+d1) + a2sin(f2x + d2) on a bitmap
+# To run can use RARS RISC-V simulator
+	.eqv    SYS_EXT, 10
+    	.eqv    PRNT_FLT, 2
+    	.eqv    PRNT_STR, 4
+    	.eqv	RD_FLT, 6
+    
+    	.data
+    
+newline:	.ascii "\n"
+angle_neg_flag: .word 0
+prompt_a1:    	.ascii "Enter value for a_1: \0"
+prompt_f1:    	.ascii "Enter value for f_1: \0"
+prompt_d1:    	.ascii "Enter value for d1: \0"
+prompt_a2:    	.ascii "Enter value for a_2: \0"
+prompt_f2:    	.ascii "Enter value for f_2: \0"
+prompt_d2:    	.ascii "Enter value for d2: \0"
+
+.bitmap_addr: 	.word 0x10010000
+
+# Hardcode values
+a_1:		.float 0.0    
+f_1:    	.float 0.0      
+d1:     	.float 0.0  
+	
+a_2:       	.float 0.0  #0.5
+f_2:       	.float 0.0  #1.0    
+d2:        	.float 0.0  #0.5
+
+const_6:   	.float 6.0
+const_120: 	.float 120.0
+
+step:      	.float 0.01  		# step size
+limit:     	.float 50.0      	# upper limit 
+start:	   	.float 0.0		# min value			   
+current:   	.float 0.0       	# Current value of x
+
+scale_of_screen: .float 511
+
+    	.text
+    	
+input_values:
+	#a_1
+	la a0, prompt_a1
+    	li a7, PRNT_STR                
+    	ecall
+
+    	li a7, RD_FLT                
+    	ecall
+    	la t0, a_1
+    	fsw fa0, 0(t0)          # Store user input in a_1
+    	
+    	#f_1
+    	la a0, prompt_f1
+    	li a7, PRNT_STR                
+    	ecall
+
+    	li a7, RD_FLT                
+    	ecall
+    	la t0, f_1
+    	fsw fa0, 0(t0)          # Store user input in f_1
+    	
+    	#d_1
+    	la a0, prompt_d1
+    	li a7, PRNT_STR                
+    	ecall
+
+    	li a7, RD_FLT                
+    	ecall
+    	la t0, d1
+    	fsw fa0, 0(t0)          # Store user input in d_1
+    	
+    	
+    	#a_2
+	la a0, prompt_a2
+    	li a7, PRNT_STR                
+    	ecall
+
+    	li a7, RD_FLT                
+    	ecall
+    	la t0, a_2
+    	fsw fa0, 0(t0)          # Store user input in a_2
+    	
+    	#f_2
+    	la a0, prompt_f2
+    	li a7, PRNT_STR                
+    	ecall
+
+    	li a7, RD_FLT                
+    	ecall
+    	la t0, f_2
+    	fsw fa0, 0(t0)          # Store user input in f_2
+    	
+    	#d_2
+    	la a0, prompt_d2
+    	li a7, PRNT_STR                
+    	ecall
+
+    	li a7, RD_FLT                
+    	ecall
+    	la t0, d2
+    	fsw fa0, 0(t0)          # Store user input in d_2
+    	
+    	
+
+main:
+	la t0, a_1       
+    	flw ft0, 0(t0)    # ft0 = a_1
+    	
+
+    	la t0, f_1       
+    	flw ft1, 0(t0)    # ft1 = f_1
+
+    	la t0, d1      
+    	flw ft2, 0(t0)    # ft2 = d1
+
+    	la t0, a_2
+    	flw ft3, 0(t0)    # ft3 = a_2
+
+    	la t0, f_2       
+    	flw ft4, 0(t0)    # ft4 = f_2
+
+    	la t0, d2       
+    	flw ft5, 0(t0)    # ft5 = d2
+
+    	la t0, current
+    	flw fs1, 0(t0)     # fs1 = current x
+
+loop_start:
+	
+    	la t0, limit
+    	flw ft6, 0(t0)         # ft6 = limit
+
+   	feq.s t1, fs1, ft6     # Check if fs1 == limit
+	bnez t1, fin           # If current == limit exit loop
+
+    	fle.s t2, fs1, ft6     # Check if fs1 <= limit
+   	beqz t2, fin           # If current > limit exit loop
+
+
+# calculate sines using fist 3 terms of taylor expansion sinx = x - (x^3 / 6) + (x^5 / 120)
+    	
+fmv.s ft8, fs1       # ft8 = x
+
+    
+    
+#Taylor series calc
+calc_first_sine:
+  
+      # Clearing the flag that tells if we need to negate the result later
+      la t0, angle_neg_flag
+      sw zero, 0(t0)
+
+      # Load the value of 2*pi (~6.283185) into ft11
+      li t0, 0x40C90FDB
+      fmv.w.x ft11, t0  # ft11 = 2*pi
+      fmul.s ft8,ft8,ft1  # ft8 = f1*x
+      fadd.s ft8,ft8,ft2  # ft8 =  f1*x + d1
+  
+      # Reducing the input x (fs1) modulo 2*pi to keep it within [0, 2*pi)
+      fdiv.s ft9, ft8, ft11   # ft9 = fs1 / (2*pi)
+      fcvt.w.s t1, ft9        # Convert to integer to find how many 2*pi's fit
+      fcvt.s.w ft9, t1        # Back to float so we can multiply
+      fmul.s ft9, ft9, ft11   # Multiply by 2*pi to get the full rotation offset
+      fsub.s ft8, ft8, ft9    # Subtract to get the remainder in (0, 2*pi)
+  
+  
+      # Check if ft8 > pi and shift to (-pi, pi)
+      li t0, 0x40490FDB       # Load pi (~3.141593)
+      fmv.w.x ft9, t0         # ft9 = pi
+      fgt.s t1, ft8, ft9      # Compare ft8 > pi
+      beqz t1, skip_subtract  # If not, skip
+      fsub.s ft8, ft8, ft11   # Otherwise, subtract 2*pi
+      
+      
+skip_subtract:
+
+      # Reduce range further to (-pi/2, pi/2) for better Taylor accuracy
+      li t0, 0x3FC90FDB       # Load pi/2 (~1.570796)
+      fmv.w.x ft9, t0         # ft9 = pi/2
+
+      # If ft8 > pi/2, use symmetry: sin(x) = sin(pi - x)
+      fgt.s t1, ft8, ft9      # Check if ft8 > pi/2
+      beqz t1, check_lower_half  # If not, skip
+      li t0, 0x40490FDB       # Load pi again
+      fmv.w.x ft10, t0        # ft10 = pi
+      fsub.s ft8, ft10, ft8   # ft8 = pi - ft8
+      j angle_reduced         # Jump to final step
+
+check_lower_half:
+      # If ft8 < -pi/2, use symmetry: sin(x) = -sin(-x)
+      li t0, 0xBFC90FDB       # Load -pi/2 (~-1.570796)
+      fmv.w.x ft10, t0        # ft10 = -pi/2
+      flt.s t1, ft8, ft10     # Check if ft8 < -pi/2
+      beqz t1, angle_reduced  # If not, skip
+      fneg.s ft8, ft8         # ft8 = -ft8 (make it positive for further calc)
+      li t0, 0x40490FDB       # Load pi
+      fmv.w.x ft10, t0        # ft10 = pi
+      fsub.s ft8, ft10, ft8   # ft8 = pi - ft8
+      # Set the flag to remember we need to negate the result later
+      la t0, angle_neg_flag
+      li t2, 1
+      sw t2, 0(t0)
+
+angle_reduced:
+      # At this point, ft8 is in the range (-pi/2, pi/2)
+
+      # Taylor series: sin(x) = x - x^3/6 + x^5/120
+      fmv.s fa7, ft8          # Save the original x value fa7 = x
+
+
+      fmul.s ft9, fa7, fa7    # ft9 = x^2
+      # Calculate x^3 and divide by 6
+      fmul.s ft10, ft9, fa7   # ft10 = x^3
+      la t0, const_6          # Load 6.0
+      flw ft11, 0(t0)         # ft11 = 6.0
+      fdiv.s ft10, ft10, ft11 # ft10 = x^3 / 6
+      fsub.s ft8, fa7, ft10   # ft8 = x - x^3/6
+
+      # Calculate x^5 and divide by 120
+      fmul.s ft10, ft9, ft9   # ft10 = x^4
+      fmul.s ft10, ft10, fa7  # ft10 = x^5
+      la t0, const_120        # Load 120.0
+      flw ft11, 0(t0)         # ft11 = 120.0
+      fdiv.s ft10, ft10, ft11 # ft10 = x^5 / 120
+      fadd.s ft8, ft8, ft10   # ft8 = x - x^3/6 + x^5/120
+
+      # Check the flag to see if we need to negate the result
+      la t0, angle_neg_flag
+      lw t1, 0(t0)
+      beqz t1, no_negate      # If flag is 0, no need to negate
+      fneg.s ft8, ft8         # Otherwise, negate the result
+
+no_negate:
+      # Scale the result by amplitude a1
+      fmul.s ft8, ft8, ft0    # ft8 = a1 * sin(x)
+      fmv.s fs3,ft8
+
+ 
+#######################################################################
+calc_second_sine:
+	fmv.s ft8, fs1 	#load current x 
+    	# Clearing the flag that tells if we need to negate the result later
+    	la t0, angle_neg_flag
+    	sw zero, 0(t0)
+
+    	# Load the value of 2*pi (~6.283185) 
+    	li t0, 0x40C90FDB
+    	fmv.w.x ft11, t0  	# ft11 = 2*pi
+	fmul.s ft8,ft8,ft4	# ft8 = f2*x
+	fadd.s ft8,ft8,ft5	# ft8 =  f2*x + d2
+	
+
+	
+
+    	# Reducing the input x (fs1) modulo 2*pi to keep it within [0, 2*pi)
+    	fdiv.s ft9, ft8, ft11   # ft9 = fs1 / (2*pi)
+    	fcvt.w.s t1, ft9        # Convert to integer to find how many 2*pi's fit
+    	fcvt.s.w ft9, t1        # Back to float so we can multiply
+    	fmul.s ft9, ft9, ft11   # Multiply by 2*pi to get the full rotation offset
+    	fsub.s ft8, ft8, ft9    # Subtract to get the remainder in (0, 2*pi)
+	
+	
+    	# Check if ft8 > pi and shift to (-pi, pi)
+    	li t0, 0x40490FDB       # Load pi (~3.141593)
+    	fmv.w.x ft9, t0         # ft9 = pi
+    	fgt.s t1, ft8, ft9      # Compare ft8 > pi
+    	beqz t1, skip_subtract2  # If not, skip
+    	fsub.s ft8, ft8, ft11   # Otherwise, subtract 2*pi
+    	
+    	
+skip_subtract2:
+
+    	# Reduce range further to (-pi/2, pi/2) for better Taylor accuracy
+    	li t0, 0x3FC90FDB       # Load pi/2 (~1.570796)
+    	fmv.w.x ft9, t0         # ft9 = pi/2
+
+    	# If ft8 > pi/2, use symmetry: sin(x) = sin(pi - x)
+    	fgt.s t1, ft8, ft9      # Check if ft8 > pi/2
+    	beqz t1, check_lower_half2  # If not, skip
+    	li t0, 0x40490FDB       # Load pi again
+    	fmv.w.x ft10, t0        # ft10 = pi
+    	fsub.s ft8, ft10, ft8   # ft8 = pi - ft8
+    	j angle_reduced2        # Jump to final step
+
+check_lower_half2:
+    	# If ft8 < -pi/2, use symmetry: sin(x) = -sin(-x)
+    	li t0, 0xBFC90FDB       # Load -pi/2 (~-1.570796)
+    	fmv.w.x ft10, t0        # ft10 = -pi/2
+    	flt.s t1, ft8, ft10     # Check if ft8 < -pi/2
+    	beqz t1, angle_reduced2  # If not, skip
+    	fneg.s ft8, ft8         # ft8 = -ft8 (make it positive for further calc)
+    	li t0, 0x40490FDB       # Load pi
+    	fmv.w.x ft10, t0        # ft10 = pi
+    	fsub.s ft8, ft10, ft8   # ft8 = pi - ft8
+    	# Set the flag to remember we need to negate the result later
+    	la t0, angle_neg_flag
+    	li t2, 1
+    	sw t2, 0(t0)
+
+angle_reduced2:
+    	# At this point, ft8 is in the range (-pi/2, pi/2)
+    	# Taylor series: sin(x) = x - x^3/6 + x^5/120
+    	fmv.s fa7, ft8          # Save the original x value (fa7 = x)
+
+    	# Calculate x^2
+    	fmul.s ft9, fa7, fa7    # ft9 = x^2
+    	# Calculate x^3 and divide by 6
+    	fmul.s ft10, ft9, fa7   # ft10 = x^3
+    	la t0, const_6          # Load 6.0
+    	flw ft11, 0(t0)         # ft11 = 6.0
+    	fdiv.s ft10, ft10, ft11 # ft10 = x^3 / 6
+    	fsub.s ft8, fa7, ft10   # ft8 = x - x^3/6
+
+    	# Calculate x^5 and divide by 120
+    	fmul.s ft10, ft9, ft9   # ft10 = x^4
+    	fmul.s ft10, ft10, fa7  # ft10 = x^5
+    	la t0, const_120        # Load 120.0
+    	flw ft11, 0(t0)         # ft11 = 120.0
+    	fdiv.s ft10, ft10, ft11 # ft10 = x^5 / 120
+    	fadd.s ft8, ft8, ft10   # ft8 = x - x^3/6 + x^5/120
+
+    	# Check the flag to see if we need to negate the result
+    	la t0, angle_neg_flag
+    	lw t1, 0(t0)
+    	beqz t1, no_negate2      # If flag is 0, no need to negate
+    	fneg.s ft8, ft8         # Otherwise, negate the result
+
+no_negate2:
+    	# Scale the result by amplitude a1
+    	fmul.s ft8, ft8, ft3    # ft8 = a2 * sin(x)
+    	
+    	fadd.s ft8,ft8,fs3
+    	
+map_x:
+    	# Normalize x to the range [0, 1]
+    	la t0, start            # Load the address of x_min (start)
+    	flw ft7, 0(t0)          # ft7 = x_min
+    	la t0, limit            # Load the address of x_max (limit)
+    	flw ft6, 0(t0)          # ft6 = x_max
+
+    	fsub.s ft6, ft6, ft7    # ft6 = range = x_max - x_min
+    	fsub.s ft9, fs1, ft7    # ft9 = x_normalized = x - x_min
+    	fdiv.s ft9, ft9, ft6    # ft9 = x_scaled = x_normalized / range
+
+    	# Scale x_scaled to the range [0, 511]
+    	la t0, scale_of_screen  # Load the address of 511 (scale factor)
+    	flw ft7, 0(t0)          # ft7 = 511
+    	fmul.s ft9, ft9, ft7    # ft9 = x_mapped = x_scaled * 511
+	 	# Convert to integer
+    	fcvt.w.s t1, ft9        # t1 = int(x_mapped)
+	
+	    
+
+map_y:	#ft0 - ft5 taken; fs1 = x; ft8 = y; ft6 = max; ft10 = step
+	# scale y to 0 -511
+	# calculate ymax
+
+	# Offset and normalize y
+    	la t0, a_1
+   	flw ft7, 0(t0)          # ft7 = a_1
+    	la t0, a_2
+    	flw ft9, 0(t0)          # ft9 = a_2
+    	fadd.s ft7, ft7, ft9    # ft7 = total amplitude = a_1 + a_2
+	
+
+
+    	# Add offset to move y into the positive range
+    	fadd.s ft11, ft8, ft7   # ft11 = y + amplitude
+	
+
+	
+	li t0, 0x40000000
+	fmv.w.x fs9, t0        # ft9 = 2.0
+	# Normalize y to the range [0, 1]
+	fmul.s ft10, ft7, fs9   # range = 2 * amplitude
+	fdiv.s ft9, ft11, ft10  # ft9 = normalized_y = (y + amplitude) / (2 * amplitude)
+	
+
+	
+    	# Scale normalized_y to the range [0, 511]
+    	la t0, scale_of_screen
+    	flw ft11, 0(t0)         # ft11 = 511
+    	fmul.s ft9, ft9, ft11   # ft9 = scaled_y = normalized_y * 511
+    	
+    	fsub.s ft9,ft11,ft9
+
+    	# Convert to integer
+    	fcvt.w.s t2, ft9        # t2 = int(scaled_y)
+    	
+	
+
+	
+calc_bitmap_address:
+    	la t0, .bitmap_addr  # Load the base address of the bitmap
+    	lw t3, 0(t0)         # Load the bitmap base address into t3
+    
+    	li t6, 512           # Load 511 (width of the bitmap)
+    	mul t4, t2, t6       # t4 = yscaled * 511
+    	add t4, t4, t1       # t4 = yscaled * 511 + xscaled
+    	slli t4, t4, 2       # t4 = (yscaled * 511 + xscaled) * 4 (byte address)
+    	
+    	add t5, t3, t4       # t5 = base address + (yscaled * 511 + xscaled) * 4
+	
+	li t6, 0xFFFFFFFF  # Load white color value
+	sw t6, 0(t5)       # Store white color at the calculated address
+	
+	
+	# Increment current by step
+    	la t0, step
+    	flw ft10, 0(t0)         # ft10 = step
+    	fadd.s fs1, fs1, ft10   # fs1 = fs1 + step
+    	
+    	j loop_start
+
+
+fin:
+    	li a7, SYS_EXT
+    	ecall
+	
